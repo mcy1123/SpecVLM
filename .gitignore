@@ -2,3 +2,4 @@ results/
 __pycache__/
 .spec-workflow/
 *.pdf
+datasets/
