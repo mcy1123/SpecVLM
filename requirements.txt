@@ -1,6 +1,6 @@
 transformers==4.48.0
-datasets
+datasets>=2.14,<3
 accelerate
-numpy
-qwen-vl-utils==0.0.10 
+numpy<2.0
+qwen-vl-utils==0.0.10
 av==14.0.0
