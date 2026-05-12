@@ -24,7 +24,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
+import math, os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -366,6 +366,19 @@ class Qwen2_5_VLVisionSdpaAttention(nn.Module):
         else:
             cos, sin = position_embeddings
         q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
+
+        # Per-frame SDPA: avoids O(total_seq²) mask when SPECVLM_PER_FRAME_VIT=1
+        if os.environ.get("SPECVLM_PER_FRAME_VIT") == "1":
+            outputs = []
+            for i in range(1, len(cu_seqlens)):
+                s, e = cu_seqlens[i - 1].item(), cu_seqlens[i].item()
+                qi = q[s:e].transpose(0, 1).unsqueeze(0)
+                ki = k[s:e].transpose(0, 1).unsqueeze(0)
+                vi = v[s:e].transpose(0, 1).unsqueeze(0)
+                out = F.scaled_dot_product_attention(qi, ki, vi, is_causal=False)
+                outputs.append(out.squeeze(0).transpose(0, 1))
+            attn_output = self.proj(torch.cat(outputs, dim=0).reshape(seq_length, -1))
+            return attn_output
 
         attention_mask = torch.zeros([1, seq_length, seq_length], device=q.device, dtype=torch.bool)
         for i in range(1, len(cu_seqlens)):

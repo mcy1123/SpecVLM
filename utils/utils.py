@@ -41,8 +41,8 @@ def load_model(model_type, base_model_path, draft_model_path):
             attn_implementation = "sdpa",
         )
         draft_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            draft_model_path, 
-            device_map="auto", 
+            draft_model_path,
+            device_map="auto",
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
             attn_implementation = "sdpa",
@@ -60,15 +60,17 @@ def load_model(model_type, base_model_path, draft_model_path):
 def load_data(task, data_num, data_path):
     if task == "VideoDetailCaption":
         data_video = load_dataset(
-                "/ycji/datasets/VideoDetailCaption",
+                data_path,
                 split="test",
                 # cache_dir=cache_dir,
             ).shuffle(seed=42).select(range(data_num))
 
         video_dir = os.path.join(data_path, "Test_Videos/")
         def video_exists(example):
-            video_path = os.path.join(video_dir, f"{example['video_name']}.mp4")
-            return os.path.exists(video_path)
+            for ext in (".mp4", ".mkv"):
+                if os.path.exists(os.path.join(video_dir, f"{example['video_name']}{ext}")):
+                    return True
+            return False
 
         filtered_data = data_video.filter(video_exists)
         data_video = filtered_data
@@ -538,12 +540,15 @@ def clip_input(processor, data_instance):
     return inputs
 
 
-def clip_input_video(processor, task, data_instance, frame_num=64, model_type='llava_ov',data_path=None):
+def clip_input_video(processor, task, data_instance, frame_num=64, model_type='llava_ov',data_path=None, min_pixels=None, max_pixels=None):
     if model_type == 'llava_ov':
         if task == "VideoDetailCaption":
-            video_path = os.path.join(data_path, "Test_Videos/")
+            video_dir = os.path.join(data_path, "Test_Videos/")
             video_name = data_instance["video_name"]
-            video_path = video_path + video_name + ".mp4"
+            for ext in (".mp4", ".mkv"):
+                video_path = os.path.join(video_dir, video_name + ext)
+                if os.path.exists(video_path):
+                    break
 
             question = data_instance["question"]
             conversation = [
@@ -647,9 +652,12 @@ def clip_input_video(processor, task, data_instance, frame_num=64, model_type='l
             return required_fps
 
         if task == "VideoDetailCaption":
-            video_path = os.path.join(data_path, "Test_Videos/")
+            video_dir = os.path.join(data_path, "Test_Videos/")
             video_name = data_instance["video_name"]
-            video_path = video_path + video_name + ".mp4"
+            for ext in (".mp4", ".mkv"):
+                video_path = os.path.join(video_dir, video_name + ext)
+                if os.path.exists(video_path):
+                    break
             question = data_instance["question"]
         
         elif task == "MVBench":
@@ -680,16 +688,23 @@ def clip_input_video(processor, task, data_instance, frame_num=64, model_type='l
             return None
 
         fps = calculate_fps_for_target_frames(container, frame_num)
+        video_content = {
+            "type": "video",
+            "video": f"file://{video_path}",
+            "fps": fps,
+        }
+        if max_pixels is not None:
+            video_content["max_pixels"] = max_pixels
+        else:
+            video_content["max_pixels"] = 448 * 448
+        if min_pixels is not None:
+            video_content["min_pixels"] = min_pixels
+
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "video",
-                        "video": f"file://{video_path}",
-                        "max_pixels": 448*448,  
-                        "fps": fps, 
-                    },
+                    video_content,
                     {"type": "text", "text": question},
                 ],
             }

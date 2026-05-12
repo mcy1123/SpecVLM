@@ -4,21 +4,21 @@ export HF_HUB_CACHE="${HF_HOME}/hub"
 export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
 
 # Define parameters with comments
-MODEL_TYPE="llava_ov"             # Model type: llava_ov or qwen2_5_vl
-BASE_MODEL_PATH="/home/mcy/local2/models/llava-onevision-qwen2-72b-ov-hf"  # Path to base model
-DRAFT_MODEL_PATH="/home/mcy/local2/models/llava-onevision-qwen2-7b-ov-hf"  # Path to draft model
+MODEL_TYPE="qwen2_5_vl"             # Model type: llava_ov or qwen2_5_vl
+BASE_MODEL_PATH="/home/mcy/local2/models/Qwen2.5-VL-32B-Instruct"  # Path to base model
+DRAFT_MODEL_PATH="/home/mcy/local2/models/Qwen2.5-VL-7B-Instruct"  # Path to draft model
 
 TASK="VideoDetailCaption"         # Task type: VideoDetailCaption, MVBench, MVLU, LongVideoBench, MMBench
 DATA_PATH="/home/mcy/local2/datasets/VideoDetailCaption"  # Path to dataset
 
-EVAL_NUM=2                        # Number of evaluation samples
+EVAL_NUM=5                        # Number of evaluation samples
 MAX_NEW_TOKENS=256                # Number of new tokens to generate
 DATA_NUM=100                      # Number of data samples to load
 DROP_RATE=0.9                     # Pruning ratio
-GPU_IDS="0,1"                   # GPU IDs to use
+GPU_IDS="3,4,5"                   # GPU IDs to use
 
-# A larger number of frames is generally recommended, as permitted by the model capacity, your GPU memory capacity and bandwidth. Memory bottlenecks are typically triggered by long visual sequence. 
-FRAME_NUM=64                     
+# Qwen2.5-VL currently does not support specifying input length directly. To control the input length, we adjust the fps accordingly.
+FRAME_NUM=96
 
 # Run evaluation
 CUDA_VISIBLE_DEVICES=$GPU_IDS python inference.py \

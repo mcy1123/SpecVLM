@@ -68,7 +68,7 @@ def _build_metric_record(method, decoding_times, generate_lens, accept_lengths=N
 
 
 
-def run_eval(model_type, model, draft_model, data_video, task, frame_num, evaluation_num, max_new_tokens, drop_rate, video_token_id, save_path=None, data_path=None, processor=None):
+def run_eval(model_type, model, draft_model, data_video, task, frame_num, evaluation_num, max_new_tokens, drop_rate, video_token_id, save_path=None, data_path=None, processor=None, percentage=0.5, min_pixels=None, max_pixels=None):
     # Run evaluation
     model.eval()
     draft_model.eval()
@@ -90,12 +90,15 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
         },
     }
     sample_records = []
+    actual_num = min(evaluation_num, len(data_video))
+    if evaluation_num > len(data_video):
+        print(f"WARNING: evaluation_num ({evaluation_num}) > available samples ({len(data_video)}), using {actual_num}")
 
-    for i in tqdm(range(evaluation_num)):
+    for i in tqdm(range(actual_num)):
         data_instance = data_video[i]
 
         # AR two stage
-        inputs = clip_input_video(processor, task, data_instance,frame_num = frame_num, model_type = model_type, data_path=data_path)
+        inputs = clip_input_video(processor, task, data_instance, frame_num=frame_num, model_type=model_type, data_path=data_path, min_pixels=min_pixels, max_pixels=max_pixels)
         if inputs == None:
             continue
 
@@ -109,7 +112,7 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
         sample_records.append(ar_record)
 
         # SD tree two stage  
-        inputs = clip_input_video(processor, task, data_instance,frame_num = frame_num, model_type = model_type, data_path=data_path)
+        inputs = clip_input_video(processor, task, data_instance, frame_num=frame_num, model_type=model_type, data_path=data_path, min_pixels=min_pixels, max_pixels=max_pixels)
         output_sd = SD_generate(
                 inputs,
                 model,
@@ -129,7 +132,7 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
         sample_records.append(sd_record)
 
         # SpecVLM
-        inputs = clip_input_video(processor, task, data_instance,frame_num = frame_num, model_type = model_type, data_path=data_path)
+        inputs = clip_input_video(processor, task, data_instance, frame_num=frame_num, model_type=model_type, data_path=data_path, min_pixels=min_pixels, max_pixels=max_pixels)
         output_specvlm = SD_generate_with_pruning(
                 inputs,
                 model,
@@ -140,7 +143,7 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
                 video_token_id = video_token_id,
                 max_new_tokens=max_new_tokens,
                 tree_choices=mc_sim_7b_63,
-                percentage=0.4,
+                percentage=percentage,
         )
         output_text = processor.batch_decode(output_specvlm['output_ids'], skip_special_tokens=True)[0]
         specvlm_record = _build_record(i, "specvlm", output_specvlm, output_text, include_accept_length=True)
@@ -230,7 +233,13 @@ if __name__ == "__main__":
                         help='GPU IDs to use')
     parser.add_argument('--setting', type=str, default='standard',
                         choices=['self', 'standard'],
-                        help='Speculative Decoding setting') #TODO: For 'self' setting, load draft model as base model to save memory cost.
+                        help='Speculative Decoding setting')
+    parser.add_argument('--percentage', type=float, default=0.5,
+                        help='Attention mass threshold for Stage I selection')
+    parser.add_argument('--min_pixels', type=int, default=None,
+                        help='Min pixels per frame (controls visual token count)')
+    parser.add_argument('--max_pixels', type=int, default=None,
+                        help='Max pixels per frame (controls visual token count)')
 
     
     # Parse command line arguments
@@ -246,7 +255,11 @@ if __name__ == "__main__":
         from decoding.tree_decoding_qwen2_5 import *
     
     # Load models
-    model, draft_model, processor, video_token_id = load_model(args.model_type, args.base_model_path, args.draft_model_path)
+    if args.setting == 'self':
+        draft_model_path = args.base_model_path
+    else:
+        draft_model_path = args.draft_model_path
+    model, draft_model, processor, video_token_id = load_model(args.model_type, args.base_model_path, draft_model_path)
     
     # Load data
     data_video = load_data(args.task, args.data_num, args.data_path)
@@ -260,16 +273,19 @@ if __name__ == "__main__":
     # Run evaluation
     run_eval(
         args.model_type,
-        model=model, 
-        draft_model=draft_model, 
-        data_video=data_video, 
-        task=args.task, 
-        frame_num=args.frame_num, 
-        evaluation_num=args.evaluation_num, 
+        model=model,
+        draft_model=draft_model,
+        data_video=data_video,
+        task=args.task,
+        frame_num=args.frame_num,
+        evaluation_num=args.evaluation_num,
         max_new_tokens=args.max_new_tokens,
         drop_rate=args.drop_rate,
         video_token_id=video_token_id,
         save_path=save_path,
         data_path=args.data_path,
         processor=processor,
+        percentage=args.percentage,
+        min_pixels=args.min_pixels,
+        max_pixels=args.max_pixels,
     )
