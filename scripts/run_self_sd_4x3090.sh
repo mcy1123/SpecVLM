@@ -37,8 +37,8 @@ MAX_PIXELS=320000
 GPU_IDS="0,1,2,3"       # 4x 3090
 
 MODEL_TYPE="qwen2_5_vl"
-MODEL_PATH="~/projects/models/Qwen2.5-VL-7B-Instruct"
-DATA_PATH="~/projects/SpecVLM/datasets/VideoDetailCaption"
+MODEL_PATH=/home/mcy/projects/models/Qwen2.5-VL-7B-Instruct \                                                                                         
+DATA_PATH=/home/mcy/projects/SpecVLM/datasets/VideoDetailCaption \ 
 TASK="VideoDetailCaption"
 MAX_NEW_TOKENS=256
 DATA_NUM=100
