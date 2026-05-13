@@ -249,14 +249,12 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     gpu_list = [str(i) for i in range(len(args.gpu_ids.split(",")))]
     num_gpus = len(gpu_list)
-    # Target needs more memory (full KV cache: 14GB weights + ~2GB KV + ViT)
-    # Draft only needs 1 GPU (pruned KV cache: 14GB weights + ~2GB KV)
+    # Target and draft each need >=2 GPUs for full 25K token prefill (Naive SD path).
+    # Split evenly: first half to target, second half to draft.
     if num_gpus >= 4:
-        target_gpus = [gpu_list[0], gpu_list[1]]  # 2 GPUs for target
-        draft_gpus = [gpu_list[2]]                 # 1 GPU for draft
-    elif num_gpus >= 3:
-        target_gpus = [gpu_list[0], gpu_list[1]]
-        draft_gpus = [gpu_list[2]]
+        half = num_gpus // 2
+        target_gpus = gpu_list[:half]
+        draft_gpus = gpu_list[half:half * 2]
     elif num_gpus >= 2:
         target_gpus = [gpu_list[0]]
         draft_gpus = [gpu_list[1]]
