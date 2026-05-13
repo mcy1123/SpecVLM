@@ -251,6 +251,17 @@ def tree_draft(input_ids, draft_model, draft_past_key_values,len_posi):
 
 
 
+def _move_dict_to_device(inputs_dict, device):
+    """Move all tensor values in a dict to the specified device."""
+    result = {}
+    for k, v in inputs_dict.items():
+        if isinstance(v, torch.Tensor):
+            result[k] = v.to(device)
+        else:
+            result[k] = v
+    return result
+
+
 def initialize_tree(inputs, model, draft_model, past_key_values, draft_past_key_values,
                               method=None, video_token_id=151656, drop_rate=None):
     #Find the last video_token
@@ -269,8 +280,8 @@ def initialize_tree(inputs, model, draft_model, past_key_values, draft_past_key_
 
     #Second stage of prefilling text tokens
     output = model(
-        input_ids=text_input_ids, 
-        past_key_values=past_key_values, 
+        input_ids=text_input_ids,
+        past_key_values=past_key_values,
         output_attentions=True,
     )
     logits = output.logits
@@ -280,8 +291,10 @@ def initialize_tree(inputs, model, draft_model, past_key_values, draft_past_key_
     #Prefill of Draft Model
     inputs['input_ids'] = torch.cat([inputs['input_ids'], text_input_ids], dim=1)
     inputs['attention_mask'] = torch.cat([inputs['attention_mask'], text_attention_mask], dim=1)
+    draft_device = draft_model.model.embed_tokens.weight.device
+    draft_inputs = _move_dict_to_device(inputs, draft_device)
     output_draft = draft_model(
-        **inputs, past_key_values=draft_past_key_values
+        **draft_inputs, past_key_values=draft_past_key_values
     )
     return sample_token
 
@@ -346,8 +359,10 @@ def initialize_tree_with_pruning(inputs, model, draft_model, past_key_values, dr
     draft_input_len = inputs_drop['input_ids'].shape[1]
 
     #Prefill of Draft Model
+    draft_device = draft_model.model.embed_tokens.weight.device
+    draft_inputs = _move_dict_to_device(inputs_drop, draft_device)
     output_draft = draft_model(
-        **inputs_drop, past_key_values=draft_past_key_values
+        **draft_inputs, past_key_values=draft_past_key_values
     )
     print("Target KV:",past_key_values[0][0].shape)
     print("Draft KV:",draft_past_key_values[0][0].shape)
