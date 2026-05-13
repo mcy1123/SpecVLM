@@ -1,20 +1,17 @@
 #!/bin/bash
 # ============================================================
 # Self-SD: Qwen2.5-VL-7B → Qwen2.5-VL-7B (同模型 Target + Draft)
-# 验证 SpecVLM 剪枝贡献，与论文 Table 2 Self-SD τ ≈ 3.83 对齐
+# 2x A6000 (48GB), 128 frames, 25K visual tokens
 # ============================================================
 #
-# GPU 需求: 2x 48GB (A6000)
+# 显存分析 (每卡 48GB):
+#   - 每卡跑完整模型，无流水线并行，零 PCIe 开销
+#   - Target GPU: 14GB 权重 + 2.2GB KV + 1.3GB ViT ≈ 20GB / 48GB
+#   - Draft GPU:  14GB 权重 + 2.2GB KV + 1.3GB ViT ≈ 20GB / 48GB
 #
-# 分辨率与视觉 token 数（FRAME_NUM=128 时）:
-#   默认 (max_pixels=200704)           → ~14K visual tokens
-#   高分辨率 (min=195K, max=320K)      → ~25K visual tokens (匹配论文 ~196 tok/f)
-#   超高分辨率 (min=200K, max=350K)    → ~28K visual tokens
-#
-# 已知结果（2x A6000, 128f, 5样本, percentage=0.5）:
-#   AR:       15.51s, 15.72 tok/s
-#   Naive SD: 18.82s, 13.75 tok/s, accept_len=4.46
-#   SpecVLM:  16.37s, 15.76 tok/s, accept_len=3.84
+# 论文参考值 (Self-SD Qwen2.5-VL-7B, A100):
+#   SD-Tree τ: 4.38 | SpecVLM τ: 3.83
+#   AR tok/s: ~10.41 | SpecVLM: 15.59 tok/s, 1.50x
 
 set -euo pipefail
 
@@ -22,14 +19,18 @@ export PYTORCH_CUDA_ALLOC_CONF='expandable_segments:True'
 export HF_HOME="/home/mcy/local2/huggingface"
 export HF_HUB_CACHE="${HF_HOME}/hub"
 
-# ---- 可调参数 ----
-FRAME_NUM=128          # 64 / 96 / 128
-EVAL_NUM=5
-GPU_IDS="2,5"          # 2 张空闲 GPU
+# ---- ViT per-frame SDPA ----
+export SPECVLM_PER_FRAME_VIT=1
 
-# 分辨率控制（留空使用默认 max_pixels=200704）
-MIN_PIXELS=""           # 例: 195000
-MAX_PIXELS=""           # 例: 320000
+# ---- KVCache 容量 ----
+export SPECVLM_MAX_CACHE_LEN=40960
+
+# ---- 可调参数 ----
+FRAME_NUM=128
+EVAL_NUM=20              # 统计显著性
+MIN_PIXELS=195000        # 匹配论文 ~196 tok/frame → ~25K visual tokens
+MAX_PIXELS=320000
+GPU_IDS="4,5"            # 2x A6000 空闲
 
 MODEL_TYPE="qwen2_5_vl"
 MODEL_PATH="/home/mcy/local2/models/Qwen2.5-VL-7B-Instruct"
@@ -44,11 +45,14 @@ PIXEL_ARGS=""
 [ -n "$MIN_PIXELS" ] && PIXEL_ARGS="$PIXEL_ARGS --min_pixels $MIN_PIXELS"
 [ -n "$MAX_PIXELS" ] && PIXEL_ARGS="$PIXEL_ARGS --max_pixels $MAX_PIXELS"
 
-SAVE_DIR="results/qwen2_5_vl_${TASK}_self_sd_${FRAME_NUM}frames"
+SAVE_DIR="results/qwen2_5_vl_${TASK}_self_sd_128f_25k_2xA6000"
 
 echo "=============================================="
-echo "Self-SD 7B-7B | ${FRAME_NUM} frames | GPUs: ${GPU_IDS}"
-echo "min_pixels=${MIN_PIXELS:-default} max_pixels=${MAX_PIXELS:-default}"
+echo "Self-SD 7B-7B | 2xA6000 | 128f | ~25K tokens"
+echo "GPUs: ${GPU_IDS}"
+echo "min_pixels=${MIN_PIXELS} max_pixels=${MAX_PIXELS}"
+echo "SPECVLM_PER_FRAME_VIT=${SPECVLM_PER_FRAME_VIT}"
+echo "EVAL_NUM=${EVAL_NUM}"
 echo "=============================================="
 
 CUDA_VISIBLE_DEVICES=$GPU_IDS python inference.py \
@@ -65,7 +69,8 @@ CUDA_VISIBLE_DEVICES=$GPU_IDS python inference.py \
     --gpu_ids $GPU_IDS \
     --setting self \
     --percentage $PERCENTAGE \
-    --save_path "$SAVE_DIR" \
-    $PIXEL_ARGS
+    --min_pixels $MIN_PIXELS \
+    --max_pixels $MAX_PIXELS \
+    --save_path "$SAVE_DIR"
 
 echo "Done. Results: ${SAVE_DIR}/metric.jsonl"
