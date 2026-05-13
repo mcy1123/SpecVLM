@@ -15,18 +15,37 @@ from qwen_vl_utils import process_vision_info
 # from visualize import *
 
 
-def load_model(model_type, base_model_path, draft_model_path):
+def load_model(model_type, base_model_path, draft_model_path, target_gpus=None, draft_gpus=None):
+    def _build_max_memory(gpu_list):
+        if gpu_list is None:
+            return None
+        max_mem = {}
+        for g in gpu_list:
+            g_int = int(g)
+            try:
+                total_bytes = torch.cuda.get_device_properties(g_int).total_memory
+                usable_mib = (total_bytes - 2 * 1024**3) // (1024**2)  # reserve 2GB
+            except Exception:
+                usable_mib = 22 * 1024  # fallback 22GB
+            max_mem[g_int] = f"{max(1, usable_mib)}MiB"
+        return max_mem
+
+    target_max_memory = _build_max_memory(target_gpus)
+    draft_max_memory = _build_max_memory(draft_gpus)
+
     if model_type == 'llava_ov':
         processor = AutoProcessor.from_pretrained(base_model_path, device_map="auto", torch_dtype=torch.float16)
         model = LlavaOnevisionForConditionalGeneration.from_pretrained(
-            base_model_path, 
-            device_map="auto", 
+            base_model_path,
+            device_map="auto",
+            max_memory=target_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
         )
         draft_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
-            draft_model_path, 
-            device_map="auto", 
+            draft_model_path,
+            device_map="auto",
+            max_memory=draft_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
         )
@@ -34,25 +53,24 @@ def load_model(model_type, base_model_path, draft_model_path):
     elif model_type == 'qwen2_5_vl':
         processor = Qwen2_5_VLProcessor.from_pretrained(base_model_path, device_map="auto", torch_dtype=torch.float16)
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            base_model_path, 
-            device_map="auto", 
+            base_model_path,
+            device_map="auto",
+            max_memory=target_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
-            attn_implementation = "sdpa",
+            attn_implementation="sdpa",
         )
         draft_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             draft_model_path,
             device_map="auto",
+            max_memory=draft_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
-            attn_implementation = "sdpa",
+            attn_implementation="sdpa",
         )
         video_token_id = 151656
     else:
         print("Not supported model type.")
-
-    # video_token_id = model.config.video_token_id
-    # print("video_token_id:",video_token_id)
 
     return model, draft_model, processor, video_token_id
 

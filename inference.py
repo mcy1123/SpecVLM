@@ -247,19 +247,33 @@ if __name__ == "__main__":
     
     # Set GPU environment variables
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
-    
+    gpu_list = [str(i) for i in range(len(args.gpu_ids.split(",")))]
+    num_gpus = len(gpu_list)
+    if num_gpus >= 4:
+        target_gpus = gpu_list[:num_gpus // 2]
+        draft_gpus = gpu_list[num_gpus // 2:]
+    elif num_gpus >= 2:
+        target_gpus = gpu_list[:1]
+        draft_gpus = gpu_list[1:]
+    else:
+        target_gpus = None
+        draft_gpus = None
+
     # Import appropriate decoding functions based on model type
     if args.model_type == 'llava_ov':
         from decoding.tree_decoding import *
     else:
         from decoding.tree_decoding_qwen2_5 import *
-    
+
     # Load models
     if args.setting == 'self':
         draft_model_path = args.base_model_path
     else:
         draft_model_path = args.draft_model_path
-    model, draft_model, processor, video_token_id = load_model(args.model_type, args.base_model_path, draft_model_path)
+    model, draft_model, processor, video_token_id = load_model(
+        args.model_type, args.base_model_path, draft_model_path,
+        target_gpus=target_gpus, draft_gpus=draft_gpus,
+    )
     
     # Load data
     data_video = load_data(args.task, args.data_num, args.data_path)
