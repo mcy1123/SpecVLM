@@ -711,6 +711,7 @@ def SD_generate(
 
             # Currently, we mannually set the generation length for fair comparison.
             if new_token >= max_new_tokens:
+                input_ids = input_ids[:, :original_input_len + max_new_tokens]
                 reset_tree_mode(model)
                 reset_tree_mode(draft_model)
                 torch.cuda.synchronize()
@@ -720,7 +721,7 @@ def SD_generate(
                     'inference_time': end - infer_start,
                     'decoding_time': end - decode_start,
                     'mean_accept_length': sum(accept_length_total) / len(accept_length_total),
-                    'generate_len': new_token,
+                    'generate_len': max_new_tokens,
                 }
             
             if processor.tokenizer.eos_token_id in input_ids[0, original_input_len:].tolist():
@@ -873,6 +874,7 @@ def SD_generate_with_pruning(
             )
 
             if new_token >= max_new_tokens:
+                input_ids = input_ids[:, :original_input_len + max_new_tokens]
                 reset_tree_mode(model)
                 reset_tree_mode(draft_model)
                 torch.cuda.synchronize()
@@ -883,7 +885,7 @@ def SD_generate_with_pruning(
                     'decoding_time': end - decode_start,
                     'mean_accept_length': sum(accept_length_total) / len(accept_length_total),
                     'scores': scores,
-                    'generate_len': new_token,
+                    'generate_len': max_new_tokens,
                 }
             if processor.tokenizer.eos_token_id in input_ids[0, original_input_len:].tolist():
                 reset_tree_mode(model)

@@ -67,6 +67,8 @@ class VistaRuntimeTest(unittest.TestCase):
         selection = {
             "visual_positions": torch.tensor([1, 2, 3]),
             "selected_positions": torch.tensor([2]),
+            "prefix_end": 4,
+            "prefix_keep_positions": torch.tensor([0, 2]),
         }
         gathered_k, gathered_v, gathered_mask, indices = gather_visual_kv(
             keys, values, mask, selection
@@ -82,6 +84,8 @@ class VistaRuntimeTest(unittest.TestCase):
         selection = {
             "visual_positions": torch.tensor([1, 2, 3]),
             "selected_positions": torch.tensor([1, 2, 3]),
+            "prefix_end": 4,
+            "prefix_keep_positions": torch.tensor([0, 1, 2, 3]),
         }
         gathered_k, gathered_v, _, indices = gather_visual_kv(
             keys, values, None, selection

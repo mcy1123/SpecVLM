@@ -24,7 +24,15 @@ used to claim speedup; formal performance measurements are reserved for the
 | Long visual input | 64 frames, 4,340 visual tokens | Completed; exact match with AR |
 | Multi-GPU long input | 128 frames, 8,820 visual tokens | Completed on target GPUs 0,1 and draft GPUs 2,3; exact match with AR |
 | Consecutive regression | 5 videos, 8 frames, 16 tokens | 5/5 exact matches; no state leakage or monotonic memory growth |
-| Unit tests | AnchorBank and runtime collector | 7/7 passed |
+| Unit tests | AnchorBank, sparse gather, and runtime collector | 9/9 passed |
+
+An additional two-sample, 64-frame, 32-token comparison was run on the local
+7B/3B pair. VISTA remained exact on both samples, but did not outperform the
+official SpecVLM baseline on RTX 3090. Precomputing sparse prefix indices reduced
+the first sample's VISTA decode time from 6.38s to 5.79s (about 9%), while the
+corresponding SpecVLM sample took 3.26s. This is a negative local performance
+result and reinforces that H100 32B/7B measurements are required before making
+any acceleration claim.
 
 The 64-frame run used both routes and performed four anchor refreshes. The
 128-frame run exercised four-GPU model placement and performed a verifier-
@@ -64,3 +72,6 @@ python vista_inference.py \
 - Anchor sets remained stable in the small local regression, so H100 testing
   must determine whether dynamic refresh improves acceptance over static
   anchors on longer generations and more diverse videos.
+- Sparse `index_select` still materializes compact K/V tensors in every draft
+  layer. If H100 results remain slower than SpecVLM, the next optimization is a
+  fused sparse-attention kernel or a persistent compact draft KV cache.

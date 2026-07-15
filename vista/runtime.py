@@ -16,15 +16,11 @@ def gather_visual_kv(
     if selection is None:
         return key_states, value_states, attention_mask, None
     cache_length = key_states.shape[-2]
-    visual_positions = selection["visual_positions"].to(key_states.device)
-    selected_positions = selection["selected_positions"].to(key_states.device)
-    visual_positions = visual_positions[visual_positions < cache_length]
-    selected_positions = selected_positions[selected_positions < cache_length]
-
-    keep_mask = torch.ones(cache_length, dtype=torch.bool, device=key_states.device)
-    keep_mask[visual_positions] = False
-    keep_mask[selected_positions] = True
-    keep_indices = torch.where(keep_mask)[0]
+    prefix_end = min(selection["prefix_end"], cache_length)
+    prefix_keep = selection["prefix_keep_positions"].to(key_states.device)
+    prefix_keep = prefix_keep[prefix_keep < prefix_end]
+    suffix_keep = torch.arange(prefix_end, cache_length, device=key_states.device)
+    keep_indices = torch.cat([prefix_keep, suffix_keep])
     key_states = key_states.index_select(2, keep_indices)
     value_states = value_states.index_select(2, keep_indices)
     if attention_mask is not None:
@@ -54,10 +50,18 @@ def set_visual_selection(
     else:
         selected_positions = torch.empty(0, dtype=torch.long)
 
+    prefix_end = int(visual_positions.max().item()) + 1
+    prefix_mask = torch.ones(prefix_end, dtype=torch.bool)
+    prefix_mask[visual_positions] = False
+    prefix_mask[selected_positions] = True
+    prefix_keep_positions = torch.where(prefix_mask)[0]
+
     for layer in model.model.layers:
         layer.self_attn.vista_visual_selection = {
             "visual_positions": visual_positions,
             "selected_positions": selected_positions,
+            "prefix_end": prefix_end,
+            "prefix_keep_positions": prefix_keep_positions,
         }
 
 
