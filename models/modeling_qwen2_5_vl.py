@@ -25,6 +25,7 @@
 # limitations under the License.
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -43,6 +44,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput
 from .modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
+from vista.runtime import gather_visual_kv
 
 from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLVisionConfig
 
@@ -366,6 +368,24 @@ class Qwen2_5_VLVisionSdpaAttention(nn.Module):
         else:
             cos, sin = position_embeddings
         q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
+
+        # Avoid materializing an O(total_visual_tokens^2) block mask for long
+        # videos. Qwen's cu_seqlens already describes independent frame blocks,
+        # so each block can use SDPA directly with identical semantics.
+        if os.environ.get("SPECVLM_PER_FRAME_VIT") == "1":
+            outputs = []
+            for i in range(1, len(cu_seqlens)):
+                start = cu_seqlens[i - 1].item()
+                end = cu_seqlens[i].item()
+                q_frame = q[start:end].transpose(0, 1).unsqueeze(0)
+                k_frame = k[start:end].transpose(0, 1).unsqueeze(0)
+                v_frame = v[start:end].transpose(0, 1).unsqueeze(0)
+                frame_output = F.scaled_dot_product_attention(
+                    q_frame, k_frame, v_frame, is_causal=False
+                )
+                outputs.append(frame_output.squeeze(0).transpose(0, 1))
+            attn_output = torch.cat(outputs, dim=0).reshape(seq_length, -1)
+            return self.proj(attn_output)
 
         attention_mask = torch.zeros([1, seq_length, seq_length], device=q.device, dtype=torch.bool)
         for i in range(1, len(cu_seqlens)):
@@ -1046,6 +1066,26 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
             value_states = past_key_value[1].cat(value_states, dim=2)
         # Reset past_key_value to avoid return past_key_value.
         past_key_value = None
+
+
+        collect_positions = getattr(self, "vista_collect_visual_positions", None)
+        if collect_positions is not None:
+            valid_positions = collect_positions.to(key_states.device)
+            valid_positions = valid_positions[valid_positions < key_states.shape[-2]]
+            self.vista_collector_state = {
+                "query_states": query_states.detach(),
+                "key_states": key_states.detach(),
+                "visual_positions": valid_positions,
+            }
+
+
+        vista_selection = getattr(self, "vista_visual_selection", None)
+        key_states, value_states, attention_mask, vista_keep_indices = gather_visual_kv(
+            key_states,
+            value_states,
+            attention_mask,
+            vista_selection,
+        )
 
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)

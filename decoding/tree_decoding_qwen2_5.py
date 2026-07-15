@@ -249,6 +249,14 @@ def tree_draft(input_ids, draft_model, draft_past_key_values,len_posi):
     return torch.cat(ss_token).view(-1)
 
 
+def _move_dict_to_device(inputs_dict, device):
+    """Move tensor values without mutating the processor output mapping."""
+    return {
+        key: value.to(device) if isinstance(value, torch.Tensor) else value
+        for key, value in inputs_dict.items()
+    }
+
+
 
 
 def initialize_tree(inputs, model, draft_model, past_key_values, draft_past_key_values,
@@ -280,8 +288,10 @@ def initialize_tree(inputs, model, draft_model, past_key_values, draft_past_key_
     #Prefill of Draft Model
     inputs['input_ids'] = torch.cat([inputs['input_ids'], text_input_ids], dim=1)
     inputs['attention_mask'] = torch.cat([inputs['attention_mask'], text_attention_mask], dim=1)
+    draft_device = draft_model.model.embed_tokens.weight.device
+    draft_inputs = _move_dict_to_device(inputs, draft_device)
     output_draft = draft_model(
-        **inputs, past_key_values=draft_past_key_values
+        **draft_inputs, past_key_values=draft_past_key_values
     )
     return sample_token
 
@@ -346,8 +356,10 @@ def initialize_tree_with_pruning(inputs, model, draft_model, past_key_values, dr
     draft_input_len = inputs_drop['input_ids'].shape[1]
 
     #Prefill of Draft Model
+    draft_device = draft_model.model.embed_tokens.weight.device
+    draft_inputs = _move_dict_to_device(inputs_drop, draft_device)
     output_draft = draft_model(
-        **inputs_drop, past_key_values=draft_past_key_values
+        **draft_inputs, past_key_values=draft_past_key_values
     )
     print("Target KV:",past_key_values[0][0].shape)
     print("Draft KV:",draft_past_key_values[0][0].shape)
@@ -412,7 +424,7 @@ def evaluate_posterior(
             candidates[:, 1:].to(logits.device) == torch.argmax(logits[:, :-1], dim=-1)
     ).int()
     candidates_accept_length = (torch.cumprod(posterior_mask, dim=1)).sum(dim=1)
-    accept_length = candidates_accept_length.max()
+    accept_length = candidates_accept_length.max().item()
     # Choose the best candidate
     if accept_length == 0:
         # Default to the first candidate if none are accepted
@@ -952,6 +964,4 @@ def AR_generate(inputs, model, max_new_tokens=100,video_token_id=151656, process
         'decoding_time':toc - tic2,
         'generate_len':generate_len,
     }
-
-
 

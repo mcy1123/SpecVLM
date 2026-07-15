@@ -15,18 +15,39 @@ from qwen_vl_utils import process_vision_info
 # from visualize import *
 
 
-def load_model(model_type, base_model_path, draft_model_path):
+def load_model(
+    model_type,
+    base_model_path,
+    draft_model_path,
+    target_gpus=None,
+    draft_gpus=None,
+):
+    def build_max_memory(gpu_ids):
+        if gpu_ids is None:
+            return None
+        max_memory = {}
+        for gpu_id in gpu_ids:
+            gpu_id = int(gpu_id)
+            total_bytes = torch.cuda.get_device_properties(gpu_id).total_memory
+            usable_mib = max(1, (total_bytes - 2 * 1024**3) // 1024**2)
+            max_memory[gpu_id] = f"{usable_mib}MiB"
+        return max_memory
+
+    target_max_memory = build_max_memory(target_gpus)
+    draft_max_memory = build_max_memory(draft_gpus)
     if model_type == 'llava_ov':
         processor = AutoProcessor.from_pretrained(base_model_path, device_map="auto", torch_dtype=torch.float16)
         model = LlavaOnevisionForConditionalGeneration.from_pretrained(
             base_model_path, 
             device_map="auto", 
+            max_memory=target_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
         )
         draft_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
             draft_model_path, 
             device_map="auto", 
+            max_memory=draft_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
         )
@@ -36,6 +57,7 @@ def load_model(model_type, base_model_path, draft_model_path):
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             base_model_path, 
             device_map="auto", 
+            max_memory=target_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
             attn_implementation = "sdpa",
@@ -43,6 +65,7 @@ def load_model(model_type, base_model_path, draft_model_path):
         draft_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             draft_model_path, 
             device_map="auto", 
+            max_memory=draft_max_memory,
             low_cpu_mem_usage=True,
             torch_dtype=torch.float16,
             attn_implementation = "sdpa",
@@ -60,15 +83,17 @@ def load_model(model_type, base_model_path, draft_model_path):
 def load_data(task, data_num, data_path):
     if task == "VideoDetailCaption":
         data_video = load_dataset(
-                "/ycji/datasets/VideoDetailCaption",
+                data_path,
                 split="test",
                 # cache_dir=cache_dir,
             ).shuffle(seed=42).select(range(data_num))
 
         video_dir = os.path.join(data_path, "Test_Videos/")
         def video_exists(example):
-            video_path = os.path.join(video_dir, f"{example['video_name']}.mp4")
-            return os.path.exists(video_path)
+            return any(
+                os.path.exists(os.path.join(video_dir, f"{example['video_name']}{ext}"))
+                for ext in (".mp4", ".mkv")
+            )
 
         filtered_data = data_video.filter(video_exists)
         data_video = filtered_data
@@ -538,12 +563,24 @@ def clip_input(processor, data_instance):
     return inputs
 
 
-def clip_input_video(processor, task, data_instance, frame_num=64, model_type='llava_ov',data_path=None):
+def clip_input_video(
+    processor,
+    task,
+    data_instance,
+    frame_num=64,
+    model_type='llava_ov',
+    data_path=None,
+    min_pixels=None,
+    max_pixels=None,
+):
     if model_type == 'llava_ov':
         if task == "VideoDetailCaption":
-            video_path = os.path.join(data_path, "Test_Videos/")
+            video_dir = os.path.join(data_path, "Test_Videos/")
             video_name = data_instance["video_name"]
-            video_path = video_path + video_name + ".mp4"
+            for ext in (".mp4", ".mkv"):
+                video_path = os.path.join(video_dir, video_name + ext)
+                if os.path.exists(video_path):
+                    break
 
             question = data_instance["question"]
             conversation = [
@@ -647,9 +684,12 @@ def clip_input_video(processor, task, data_instance, frame_num=64, model_type='l
             return required_fps
 
         if task == "VideoDetailCaption":
-            video_path = os.path.join(data_path, "Test_Videos/")
+            video_dir = os.path.join(data_path, "Test_Videos/")
             video_name = data_instance["video_name"]
-            video_path = video_path + video_name + ".mp4"
+            for ext in (".mp4", ".mkv"):
+                video_path = os.path.join(video_dir, video_name + ext)
+                if os.path.exists(video_path):
+                    break
             question = data_instance["question"]
         
         elif task == "MVBench":
@@ -680,16 +720,20 @@ def clip_input_video(processor, task, data_instance, frame_num=64, model_type='l
             return None
 
         fps = calculate_fps_for_target_frames(container, frame_num)
+        video_content = {
+            "type": "video",
+            "video": f"file://{video_path}",
+            "fps": fps,
+            "max_pixels": max_pixels if max_pixels is not None else 448 * 448,
+        }
+        if min_pixels is not None:
+            video_content["min_pixels"] = min_pixels
+
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "video",
-                        "video": f"file://{video_path}",
-                        "max_pixels": 448*448,  
-                        "fps": fps, 
-                    },
+                    video_content,
                     {"type": "text", "text": question},
                 ],
             }

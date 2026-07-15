@@ -121,3 +121,19 @@ If you find our work useful or relevant to your research, please kindly cite our
 }
 
 ```
+
+## VISTA-SD development branch
+
+This branch includes a training-free VISTA-SD prototype for Qwen2.5-VL. It
+keeps target verification dense while switching draft decoding between an
+implicit text-KV route and a sparse visual-anchor route. See
+[`docs/VISTA_MVP_PLAN.md`](docs/VISTA_MVP_PLAN.md) for the implementation plan
+and [`docs/H100_RUNBOOK.md`](docs/H100_RUNBOOK.md) for the 4x H100 benchmark
+procedure. Local RTX 3090 correctness results are recorded in
+[`docs/LOCAL_VALIDATION.md`](docs/LOCAL_VALIDATION.md).
+
+Run local tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```

@@ -449,7 +449,7 @@ def evaluate_posterior(
             candidates[:, 1:].to(logits.device) == torch.argmax(logits[:, :-1], dim=-1)
     ).int()
     candidates_accept_length = (torch.cumprod(posterior_mask, dim=1)).sum(dim=1)
-    accept_length = candidates_accept_length.max()
+    accept_length = candidates_accept_length.max().item()
     # Choose the best candidate
     if accept_length == 0:
         # Default to the first candidate if none are accepted
@@ -984,4 +984,3 @@ def AR_generate(inputs, model, max_new_tokens=100,video_token_id=151647,processo
         'decoding_time':toc - tic2,
         'generate_len':generate_len,
     }
-

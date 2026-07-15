@@ -68,7 +68,25 @@ def _build_metric_record(method, decoding_times, generate_lens, accept_lengths=N
 
 
 
-def run_eval(model_type, model, draft_model, data_video, task, frame_num, evaluation_num, max_new_tokens, drop_rate, video_token_id, save_path=None, data_path=None, processor=None):
+def run_eval(
+    model_type,
+    model,
+    draft_model,
+    data_video,
+    task,
+    frame_num,
+    evaluation_num,
+    max_new_tokens,
+    drop_rate,
+    video_token_id,
+    save_path=None,
+    data_path=None,
+    processor=None,
+    percentage=0.5,
+    min_pixels=None,
+    max_pixels=None,
+    sample_offset=0,
+):
     # Run evaluation
     model.eval()
     draft_model.eval()
@@ -91,11 +109,23 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
     }
     sample_records = []
 
-    for i in tqdm(range(evaluation_num)):
+    available_num = max(0, len(data_video) - sample_offset)
+    actual_num = min(evaluation_num, available_num)
+    if actual_num < evaluation_num:
+        print(
+            f"WARNING: requested {evaluation_num} samples, "
+            f"but only {actual_num} are available"
+        )
+
+    for i in tqdm(range(sample_offset, sample_offset + actual_num)):
         data_instance = data_video[i]
 
         # AR two stage
-        inputs = clip_input_video(processor, task, data_instance,frame_num = frame_num, model_type = model_type, data_path=data_path)
+        inputs = clip_input_video(
+            processor, task, data_instance, frame_num=frame_num,
+            model_type=model_type, data_path=data_path,
+            min_pixels=min_pixels, max_pixels=max_pixels,
+        )
         if inputs == None:
             continue
 
@@ -109,7 +139,11 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
         sample_records.append(ar_record)
 
         # SD tree two stage  
-        inputs = clip_input_video(processor, task, data_instance,frame_num = frame_num, model_type = model_type, data_path=data_path)
+        inputs = clip_input_video(
+            processor, task, data_instance, frame_num=frame_num,
+            model_type=model_type, data_path=data_path,
+            min_pixels=min_pixels, max_pixels=max_pixels,
+        )
         output_sd = SD_generate(
                 inputs,
                 model,
@@ -129,7 +163,11 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
         sample_records.append(sd_record)
 
         # SpecVLM
-        inputs = clip_input_video(processor, task, data_instance,frame_num = frame_num, model_type = model_type, data_path=data_path)
+        inputs = clip_input_video(
+            processor, task, data_instance, frame_num=frame_num,
+            model_type=model_type, data_path=data_path,
+            min_pixels=min_pixels, max_pixels=max_pixels,
+        )
         output_specvlm = SD_generate_with_pruning(
                 inputs,
                 model,
@@ -140,7 +178,7 @@ def run_eval(model_type, model, draft_model, data_video, task, frame_num, evalua
                 video_token_id = video_token_id,
                 max_new_tokens=max_new_tokens,
                 tree_choices=mc_sim_7b_63,
-                percentage=0.4,
+                percentage=percentage,
         )
         output_text = processor.batch_decode(output_specvlm['output_ids'], skip_special_tokens=True)[0]
         specvlm_record = _build_record(i, "specvlm", output_specvlm, output_text, include_accept_length=True)
@@ -218,6 +256,8 @@ if __name__ == "__main__":
                         help='Number of frames per video')
     parser.add_argument('--evaluation_num', type=int, default=1,
                         help='Number of evaluation samples')
+    parser.add_argument('--sample_offset', type=int, default=0,
+                        help='Start index after deterministic dataset shuffling')
     parser.add_argument('--max_new_tokens', type=int, default=256,
                         help='Maximum number of new tokens to generate')
     parser.add_argument('--drop_rate', type=float, default=0.9,
@@ -227,10 +267,20 @@ if __name__ == "__main__":
     parser.add_argument('--save_path', type=str, default=None,
                         help='Path to save results. If not specified, a default path will be used')
     parser.add_argument('--gpu_ids', type=str, default="0,1,2,3,4,5",
-                        help='GPU IDs to use')
+                        help='Physical GPU IDs exposed through CUDA_VISIBLE_DEVICES')
+    parser.add_argument('--target_gpu_ids', type=str, default=None,
+                        help='Logical visible GPU IDs reserved for the target model')
+    parser.add_argument('--draft_gpu_ids', type=str, default=None,
+                        help='Logical visible GPU IDs reserved for the draft model')
     parser.add_argument('--setting', type=str, default='standard',
                         choices=['self', 'standard'],
                         help='Speculative Decoding setting') #TODO: For 'self' setting, load draft model as base model to save memory cost.
+    parser.add_argument('--percentage', type=float, default=0.5,
+                        help='Attention mass threshold for SpecVLM stage I')
+    parser.add_argument('--min_pixels', type=int, default=None,
+                        help='Optional minimum pixels per video frame')
+    parser.add_argument('--max_pixels', type=int, default=None,
+                        help='Optional maximum pixels per video frame')
 
     
     # Parse command line arguments
@@ -238,6 +288,28 @@ if __name__ == "__main__":
     
     # Set GPU environment variables
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
+    visible_gpu_count = len(args.gpu_ids.split(','))
+
+    def parse_logical_gpus(value):
+        if value is None:
+            return None
+        result = [item.strip() for item in value.split(',') if item.strip()]
+        for item in result:
+            if int(item) < 0 or int(item) >= visible_gpu_count:
+                raise ValueError(
+                    f"Logical GPU {item} is outside the {visible_gpu_count} visible GPUs"
+                )
+        return result
+
+    target_gpus = parse_logical_gpus(args.target_gpu_ids)
+    draft_gpus = parse_logical_gpus(args.draft_gpu_ids)
+    if target_gpus is None or draft_gpus is None:
+        if visible_gpu_count < 2:
+            target_gpus = draft_gpus = None
+        else:
+            split = max(1, visible_gpu_count // 2)
+            target_gpus = [str(i) for i in range(split)]
+            draft_gpus = [str(i) for i in range(split, visible_gpu_count)]
     
     # Import appropriate decoding functions based on model type
     if args.model_type == 'llava_ov':
@@ -246,7 +318,13 @@ if __name__ == "__main__":
         from decoding.tree_decoding_qwen2_5 import *
     
     # Load models
-    model, draft_model, processor, video_token_id = load_model(args.model_type, args.base_model_path, args.draft_model_path)
+    model, draft_model, processor, video_token_id = load_model(
+        args.model_type,
+        args.base_model_path,
+        args.draft_model_path,
+        target_gpus=target_gpus,
+        draft_gpus=draft_gpus,
+    )
     
     # Load data
     data_video = load_data(args.task, args.data_num, args.data_path)
@@ -272,4 +350,8 @@ if __name__ == "__main__":
         save_path=save_path,
         data_path=args.data_path,
         processor=processor,
+        percentage=args.percentage,
+        min_pixels=args.min_pixels,
+        max_pixels=args.max_pixels,
+        sample_offset=args.sample_offset,
     )

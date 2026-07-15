@@ -1,3 +1,5 @@
+import os
+
 import torch
 import time
 
@@ -100,6 +102,12 @@ def initialize_past_key_values(model):
         except:
             device=model.layers[i].self_attn.q_proj.weight.device
         devices.append(device)
+    max_cache_len = int(
+        os.environ.get(
+            "SPECVLM_MAX_CACHE_LEN",
+            min(config.max_position_embeddings * 2, 16384),
+        )
+    )
     past_key_values_data_list=[]
     startnum=0
     startdevice=devices[0]
@@ -109,7 +117,7 @@ def initialize_past_key_values(model):
                 startnum * 2,
                 batch_size,
                 config.num_key_value_heads,
-                config.max_position_embeddings * 2,
+                max_cache_len,
                 config.hidden_size // config.num_attention_heads,
                 device=startdevice,
                 dtype=model.dtype,
@@ -122,7 +130,7 @@ def initialize_past_key_values(model):
         startnum * 2,
         batch_size,
         config.num_key_value_heads,
-        config.max_position_embeddings * 2,
+        max_cache_len,
         config.hidden_size // config.num_attention_heads,
         device=startdevice,
         dtype=model.dtype,
